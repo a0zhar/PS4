@@ -2,7 +2,7 @@
 #include <stddef.h>
 
 #ifdef __PS4__
-#include <ps4/mmap.h>
+#include "ps4/mmap.h"
 #else
 #include <sys/mman.h>
 #endif
@@ -11,8 +11,7 @@
 
 int pthread_create(void** retval, void* attr, void*(*start_routine)(void*), void* arg);
 
-int pthread_create__rop(void** retval, void* attr, void*(*start_routine)(void*), void* arg)
-{
+int pthread_create__rop(void** retval, void* attr, void*(*start_routine)(void*), void* arg) {
     char* new_stack = mmap(0, 65536, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0) + 65536;
     int extcall_sz = sizeof(extcall_t);
     extcall_sz -= 1;
