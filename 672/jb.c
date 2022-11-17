@@ -20,7 +20,6 @@ typedef unsigned long long PS4_ULLONG;
 typedef unsigned int PS4_UINT;
 typedef volatile int PS4_VOLAINT;
 
-
 // ps4-rop-8cc generates thread-unsafe code, so each racing thread needs its own get_tclass function
 #define GET_TCLASS(name) int name(int s) {               \
     int v;                                               \
@@ -29,9 +28,9 @@ typedef volatile int PS4_VOLAINT;
         *(PS4_VOLAINT*)0;                               \
     return v;                                            \
 }
-GET_TCLASS(get_tclass)
-GET_TCLASS(get_tclass_2)
-GET_TCLASS(get_tclass_3)
+GET_TCLASS(get_tclass);
+GET_TCLASS(get_tclass_2);
+GET_TCLASS(get_tclass_3);
 
 int set_tclass(int s, int val) {
 	if (setsockopt(s, IPPROTO_IPV6, IPV6_TCLASS, &val, sizeof(val)))
@@ -281,14 +280,11 @@ int main() {
 	enter_krop();
 	char* spray_start = spray_bin;
 	char* spray_stop = spray_end;
-	char* spray_map = mmap(
-		0,
-		spray_stop - spray_start,
+	char* spray_map = mmap(0, spray_stop - spray_start,
 		PROT_READ | PROT_WRITE | PROT_EXEC, MAP_PRIVATE | MAP_ANON,
-		-1,
-		0
-	); 
-		printf_("spray_map = 0x%llx\n", spray_map);
+		-1, 0
+	);
+	printf_("spray_map = 0x%llx\n", spray_map);
 	for (size_t i = 0; i < spray_stop - spray_start; i++)
 		spray_map[i] = spray_start[i];
 
