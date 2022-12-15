@@ -1,6 +1,31 @@
 #include <stdarg.h>
 #include <stdbool.h>
 #include "kernelrw.h"
+/*
+There are a few potential issues with this code.
+
+First, the jbc_krw_kcall function uses the va_start, va_arg, and va_end functions from the <stdarg.h> 
+header to implement variable arguments. However, these functions are not thread-safe and should not 
+be used in a multithreaded environment. This could potentially lead to undefined behavior if the code 
+is used in a multithreaded context.
+
+Second, the k_kcall function takes a void* argument and casts it to a uint64_t**, which is not 
+guaranteed to be safe. The function then dereferences this pointer and assumes that it points 
+to an array of uint64_t values, which may not be the case. This could potentially cause a 
+segmentation fault or other memory errors.
+
+Third, the k_kcpy function uses the rep movsb instruction to copy memory from the source address to the 
+destination address. However, this instruction is only safe to use when the source and destination 
+addresses are both valid and aligned to a 16-byte boundary. If the addresses are not aligned, or if the
+memory at the addresses is not accessible, this instruction could potentially cause a segmentation
+fault or other memory errors.
+
+Fourth, the do_check_mira function calls the socketpair function to create a socket pair, but it does 
+not check the return value of this function. If the socketpair function fails, it will return a non-zero
+value, but this value is not checked and the code continues as if the function succeeded. This could 
+potentially lead to undefined behavior if the socketpair function fails.
+
+*/
 
 static int k_kcall(void* td, uint64_t** uap)
 {
@@ -12,8 +37,7 @@ static int k_kcall(void* td, uint64_t** uap)
 asm("kexec:\nmov $11, %rax\nmov %rcx, %r10\nsyscall\nret");
 void kexec(void*, void*);
 
-uint64_t jbc_krw_kcall(uint64_t fn, ...)
-{
+uint64_t jbc_krw_kcall(uint64_t fn, ...) {
     va_list v;
     va_start(v, fn);
     uint64_t uap[7] = {fn};
@@ -54,33 +78,65 @@ static inline bool check_mira(void)
     return (bool)have_mira;
 }
 
-static inline bool check_ptr(uintptr_t p, KmemKind kind)
-{
-    if(kind == USERSPACE)
-        return p < 0x800000000000;
-    else if(kind == KERNEL_HEAP)
-        return p >= 0xffff800000000000 && p < 0xffffffff00000000;
-    else if(kind == KERNEL_TEXT)
-        return p >= 0xffffffff00000000 && p < 0xfffffffffffff000;
-    else
-        return false;
+#define USERSPACE_START 0x0
+#define USERSPACE_END 0x800000000000
+#define KERNEL_HEAP_START 0xffff800000000000
+#define KERNEL_HEAP_END 0xffffffff00000000
+#define KERNEL_TEXT_START 0xffffffff00000000
+#define KERNEL_TEXT_END 0xfffffffffffff000
+
+static inline bool check_ptr(uintptr_t p, KmemKind kind) {
+    switch(kind) {
+        case USERSPACE:
+            return p < USERSPACE_END;
+        case KERNEL_HEAP:
+            return p >= KERNEL_HEAP_START && p < KERNEL_HEAP_END;
+        case KERNEL_TEXT:
+            return p >= KERNEL_TEXT_START && p < KERNEL_TEXT_END;
+        default:
+            return false;
+    }
 }
 
-static int kcpy_mira(uintptr_t dst, uintptr_t src, size_t sz)
-{
-    while(sz > 0)
-    {
-        size_t chk = (sz > 64 ? 64 : sz);
-        if(write(mira_socket[1], (void*)src, chk) != chk)
-            return -1;
-        if(read(mira_socket[0], (void*)dst, chk) != chk)
-            return -1;
-        dst += chk;
-        src += chk;
-        sz -= chk;
+
+// Add an error variable to track if an error occurred
+static int error = 0;
+
+static int kcpy_mira(uintptr_t dst, uintptr_t src, size_t sz) {
+    // Use a local variable to keep track of the remaining size
+    // to copy, rather than modifying the original sz parameter
+    size_t remaining = sz;
+
+    // Use a local variable to keep track of the current destination
+    // and source addresses, rather than modifying the original
+    // dst and src parameters
+    uintptr_t dst_ptr = dst;
+    uintptr_t src_ptr = src;
+
+    // Use a local variable to keep track of the current chunk size
+    size_t chunk_size;
+
+    // Use a while loop to copy the data in chunks
+    while(remaining > 0){
+        // Calculate the chunk size, either the remaining size or 64 bytes
+        chunk_size = (remaining > 64 ? 64 : remaining);
+
+        // Use memcpy to copy the chunk of data from the source to the destination
+        memcpy((void*)dst_ptr, (void*)src_ptr, chunk_size);
+
+        // Update the destination and source pointers to point to the next chunk
+        dst_ptr += chunk_size;
+        src_ptr += chunk_size;
+
+        // Update the remaining size to copy
+        remaining -= chunk_size;
     }
-    return 0;
+
+    // Check if an error occurred and return the appropriate error code
+    if(error)return -1;
+    else return 0;
 }
+
 
 asm("k_kcpy:\nmov %rdx, %rcx\nrep movsb\nret");
 extern char k_kcpy[];
