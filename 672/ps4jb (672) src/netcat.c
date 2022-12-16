@@ -28,12 +28,12 @@ void *sender_thread(void *_) {
 	connect(q, &addr, sizeof(addr));
 	char *mirabuf = mira_blob_2;
 	int lenleft = mira_blob_2_len;
-    
-    // While lenleft is greater than 0 aka FALSE
-	while (lenleft)  {
+
+	// While lenleft is greater than 0 aka FALSE
+	while (lenleft) {
 		int chunk = write(q, mirabuf, lenleft);
 		if (chunk <= 0) // if written is less than or equal to 0
-            break;// exit  loop
+			break;// exit  loop
 		mirabuf += chunk;
 		lenleft -= chunk;
 	}
